@@ -1,6 +1,9 @@
 import numpy as np
 import time
 import pyqtgraph as pg
+import queue
+import os
+import imageio
 
 from ScopeFoundry import Measurement 
 
@@ -111,12 +114,15 @@ class Andor3ReadoutMeasure(Measurement):
         
         ## ui connection
         self.hw = andor = self.app.hardware['andor3_camera']
-        self.hw_spectro=self.app.hardware['andor_spec']
+#       self.hw_spectro=self.app.hardware['andor_spec']
         andor.settings.connected.connect_to_widget(ui.hw_connect_checkBox)
-        andor.settings.ExposureTime.connect_to_widget(ui.ExposureTime_doubleSpinBox)
+        andor.settings.ExposureTime.connect_to_widget_one_way(ui.ExposureTime_doubleSpinBox)
+        ui.ExposureTime_doubleSpinBox.valueChanged.connect(lambda: self.changeAcqOpt('ExposureTime'))
         andor.settings.SensorTemperature.connect_to_widget(ui.temperature_doubleSpinBox)
-        andor.settings.AccumulateCount.connect_to_widget(ui.Acc_Num_doubleSpinBox)
-        #andor.settings.camera_status.connect_to_widget(ui.cameraStatus_label)
+        #andor.settings.AccumulateCount.connect_to_widget_one_way(ui.Acc_Num_doubleSpinBox)
+        #ui.Acc_Num_doubleSpinBox.valueChanged.connect(lambda: self.changeAcqOpt('AccumulateCount'))
+        #ui.Acc_Num_doubleSpinBox.valueChanged.connect(lambda: self.changeAcqOpt('FrameCount'))
+        andor.settings.TemperatureStatus.connect_to_widget(ui.temp_status_comboBox)
                
         #self.settings.bg_subtract.connect_to_widget(ui.andor_ccd_bgsub_checkBox)
     
@@ -136,10 +142,10 @@ class Andor3ReadoutMeasure(Measurement):
         
         #self.settings.wl_calib.connect_to_widget(self.ui.wl_calib_comboBox)
 
-        self.hw_spectro.settings.grating_id.connect_to_widget(self.ui.gratings_comboBox)
-        self.hw_spectro.settings.input_flipper.connect_to_widget(self.ui.Spectro_in_ComboBox)
-        self.hw_spectro.settings.output_flipper.connect_to_widget(self.ui.Spectro_out_ComboBox)
-        self.hw_spectro.settings.center_wl.connect_to_widget(self.ui.center_wl)
+#        self.hw_spectro.settings.grating_id.connect_to_widget(self.ui.gratings_comboBox)
+#        self.hw_spectro.settings.input_flipper.connect_to_widget(self.ui.Spectro_in_ComboBox)
+#        self.hw_spectro.settings.output_flipper.connect_to_widget(self.ui.Spectro_out_ComboBox)
+#        self.hw_spectro.settings.center_wl.connect_to_widget(self.ui.center_wl)
         
 
         #### PLot window
@@ -237,96 +243,24 @@ class Andor3ReadoutMeasure(Measurement):
         
 
     def run(self):
-        #setup data arrays         
-        
-        camera_hw = self.app.hardware['andor3_camera']
-        cam = camera_hw.cam
-        #width_px = ccd_dev.Nx_ro
-        #height_px = ccd_dev.Ny_ro
-        
-        #ccd_hw.settings['acq_mode'] = 'single'
-        #camera_hw.settings['trigger_mode'] = 'internal'
-        
-        cam.CycleMode = "Fixed"
-
-        #t0 = time.time()
-        #meas_time=self.hw.settings['ExposureTime']*self.hw.settings['AccumulateCount']+0.05 #0.05s buffer added for the readout time of the camera
-        
-        while True: # not self.interrupt_measurement_called:
-            if self.interrupt_measurement_called:
-                break
-
-            #finished_percent=np.ceil((time.time()-t0)/meas_time*100)
-            #print(finished_percent)
-            #self.settings['progress']=finished_percent
-
-            acq = cam.acquire(frame_count=1, timeout=20000)
-            
-            self.im = acq.image.copy()
-            upper_vbin_limit=int(self.upper_vbin_limLine.getPos()[1])
-            lower_vbin_limit=int(self.lower_vbin_limLine.getPos()[1])
-            self.spectra_data =np.sum(self.im[lower_vbin_limit:upper_vbin_limit,:],axis=0)
-            #print(acq.image)
-            
-            
-            wl_calib = self.settings['wl_calib']
-            hbin = 1 #ccd_dev.get_current_hbin()
-            width_px = 2560
-            
-            if wl_calib=='acton_spectrometer':
-                px_index = np.arange(width_px)
-                spec_hw = self.app.hardware['acton_spectrometer']
-                self.wls = spec_hw.get_wl_calibration(px_index, hbin)
-            elif wl_calib=='andor_spectrometer':
-                px_index = np.arange(width_px)
-                spec_hw = self.app.hardware['andor_spec']
-                self.wls = spec_hw.get_wl_calibration(px_index, hbin)   
-            elif wl_calib=='pixels':
-                binning = hbin
-                px_index = np.arange(width_px)
-                self.wls = binned_px = binning*px_index + 0.5*(binning-1)
-            elif wl_calib=='raw_pixels':
-                self.wls = np.arange(width_px)
-            else:
-                self.wls = np.arange(width_px)
-                
-            if not self.settings['continuous']:
-                print(str(self.settings['run_continuously']))
-                break
-            
-            
-
-
-        # Ensure you have write permission for the destination location
-        #acq.show()
-       # t_acq = self.app.hardware['andor_ccd'].settings['exposure_time'] #in seconds
-        
-       #wait_time = 0.01 #np.min(1.0,np.max(0.05*t_acq, 0.05)) # limit update period to 50ms (in ms) or as slow as 1sec
-        
-        # print('andor_ccd_readout run')
-        
-        '''   
+        self.settings['progress']=0
         try:
-            self.log.info("starting acq")
+            #setup data arrays         
             
-            # print("starting acq")
-            ccd_dev.start_acquisition()
-        
-            self.log.info( "checking..." )
-            t0 = time.time()
+            camera_hw = self.app.hardware['andor3_camera']
+            self.cam = cam = camera_hw.cam
 
-#             if 'acton_spectrometer' in self.app.hardware and self.app.hardware['acton_spectrometer'].settings['connected']:
-#                 self.wls  = self.pixel2wavelength(
-#                               self.app.hardware['acton_spectrometer'].settings['center_wl'], 
-#                               np.arange(width_px))
-#                               #, binning=ccd_dev.get_current_hbin())
-#             else:
-#                 self.wls = np.arange(width_px)
+            cam.CycleMode = "Fixed"
+            self.AqcOptBuffer = queue.Queue()
 
             while not self.interrupt_measurement_called:
+                
 
+                #calculate the x-axis for spectra
                 wl_calib = self.settings['wl_calib']
-                hbin = ccd_dev.get_current_hbin()
+                hbin = 1 #ccd_dev.get_current_hbin()
+                width_px = 2560
+                
                 if wl_calib=='acton_spectrometer':
                     px_index = np.arange(width_px)
                     spec_hw = self.app.hardware['acton_spectrometer']
@@ -343,133 +277,127 @@ class Andor3ReadoutMeasure(Measurement):
                     self.wls = np.arange(width_px)
                 else:
                     self.wls = np.arange(width_px)
-
-            
-                stat = ccd_hw.settings.ccd_status.read_from_hardware()
-                if stat == 'IDLE':
-                    # grab data
-                    t1 = time.time()
-                    #print "acq time", (t1-t0)
-                    t0 = t1
                 
-                    self.buffer_ = ccd_hw.get_acquired_data()
-                                        
-                    #print('andor_ccd buffer', self.buffer_.shape, ccd_dev.buffer.shape)
-                
-                    if self.bg_subtract.val and not self.acquire_bg.val:
-                        bg = ccd_hw.background
-                        if bg is not None:
-                            if bg.shape == self.buffer_.shape:
-                                self.buffer_ = self.buffer_ - bg
-                            else:
-                                self.log.warning("Background not the correct shape {} != {}".format( self.buffer_.shape, bg.shape))
-                        else:
-                            self.log.warning( "No Background available, raw data shown")
-                            
-                    if ccd_hw.settings['acq_mode'] == 'accumulate':
-                        self.buffer_ = self.buffer_ / ccd_hw.settings['num_acc']
+                #check if the exposure was ment to be changed during acquisition. if so, change it now.
+                while self.AqcOptBuffer.empty()==False:
+                    AcqOpt=self.AqcOptBuffer.get()
+                    self.hw.settings[AcqOpt[0]]=AcqOpt[1]
 
-                    self.spectra_data = np.average(self.buffer_, axis=0)
- 
- 
-                    if self.acquire_bg.val or not self.settings.continuous.val:
-                        break # end the while loop for non-continuous scans
-                    else:
-                        # restart acq
-                        ccd_dev.start_acquisition()
-                    
-                else:
-                    #sleep(wait_time)
-                    #print("GetTotalNumberImagesAcquired", ccd_dev.get_total_number_images_acquired())
-                    #print("get_number_new_images", ccd_dev.get_number_new_images())
-                    #print("get_number_available_images", ccd_dev.get_number_available_images())
-                    sleep(0.01)
+                #the acquire function is copied from the andor_camera.py and then and idle loop is insertet while waiting for the buffer. this listens for a measurment interrupt and keeps track of progress
+                #if not cam._lib.get_bool(cam._handle, "CameraAcquiring"):
+                def acquire( loop_progress,accumulations,*args, **kwargs,):
+                    cam.configure(*args)
+                    timeout = kwargs.pop('timeout', max(5000, np.ceil(5 * 1000 / cam.FrameRate)))
+                    min_buf = kwargs.pop('min_buf', 2)
+                    pause_after = kwargs.pop('pause_after', 0.0)
+                    sw_trigger = cam.TriggerMode == "SoftwareTrigger"
+                    for _ in range(0, min_buf):
+                        cam._queue_buffer(cam.ImageSizeBytes)
                     try:
-                        ccd_hw.settings.temperature.read_from_hardware()
-                        ccd_hw.settings.temp_status.read_from_hardware()
-                    except Exception as err:
-                        pass # sometimes temperature can't be read during acquisition
-        #except Exception as err:
-        #    self.log.error( "{} error: {}".format(self.name, err))
-        finally:            
-            # while-loop is complete
-            ccd_hw.interrupt_acquisition()
+                        cam.AcquisitionStart()
+                        if sw_trigger : cam.SoftwareTrigger()
+
+                        #idle loop here
+                        if cam.ExposureTime>0.1:
+                            acq_start=time.time()
+                            time_progressed=0
+                            while time_progressed<cam.ExposureTime:
+                                if self.interrupt_measurement_called:
+                                    self.cam.AcquisitionInterrupt()
+                                    break
+
+                                self.settings['progress']=(loop_progress/accum+(time_progressed/cam.ExposureTime/accum))*100
+                                time.sleep(0.05)
+                                time_progressed=time.time()-acq_start
+
+                        acq = cam._acquire(timeout)
+                    except Exception as e:
+                        cam.AcquisitionStop()
+                        cam._flush()
+                        raise e
+                    if(pause_after > 0):
+                        time.sleep(pause_after)
+                    cam.AcquisitionStop()
+                    cam._flush()
+                    return acq
+
+
+                #setup the accumulation then start the actual data acquisition
+                accum=int(self.ui.Acc_Num_doubleSpinBox.value())
+                im_buff=np.zeros((camera_hw.settings['SensorHeight'],camera_hw.settings['SensorWidth']),dtype=np.uint64)
+                for k in range(accum):
+
+                    if self.interrupt_measurement_called: break
+                    im_buff+=acquire(k,accum,frame_count=1, timeout=20000).image.copy()
+
+                    self.im=im_buff/(k+1)
+                    upper_vbin_limit=int(self.upper_vbin_limLine.getPos()[1])
+                    lower_vbin_limit=int(self.lower_vbin_limLine.getPos()[1])
+                    self.spectra_data=np.sum(self.im[lower_vbin_limit:upper_vbin_limit,:],axis=0)
+
+                
+                if not self.settings['continuous']: #stop the loop when not running contiuously
+                    break
+                
+            while self.AqcOptBuffer.empty()==False:
+                    AcqOpt=self.AqcOptBuffer.get()
+                    self.hw.settings[AcqOpt[0]]=AcqOpt[1]
+        finally:
+        # Save data file if the measurement wasnt interrupted
 
             
-            #is this right place to put this?
-            # Signal emission from other threads ok?
-            #self.measurement_state_changed.emit(False)
-        
-            if self.acquire_bg.val:
-                if self.interrupt_measurement_called:
-                    ccd_hw.background = None
-                else:
-                    ccd_hw.background = self.buffer_.copy()
-                self.acquire_bg.update_value(False)    
-        
-            if not self.settings.continuous.val:
-                if self.interrupt_measurement_called:
-                    self.spectrum = None
-                else:
-                    self.spectrum = self.buffer_.copy()
-                    
-                # Save data file
-                if self.settings['save_h5']:
+
+            if self.settings['save_h5']:
+                if not self.interrupt_measurement_called:
+
+                    #make sure to get latest data (save function might be called before the actual refresh of the plot happens so dont take it from there)
+                    save_img=np.fliplr(self.im) #flip left right to have same orientation as in the display function
+                    #buit H5 file
                     self.t0 = time.time()
                     self.h5_file = h5_io.h5_base_file(self.app, measurement=self )
                     self.h5_file.attrs['time_id'] = self.t0
                     H = self.h5_meas_group  =  h5_io.h5_create_measurement_group(self, self.h5_file)
-                
+                    
                     #create h5 data arrays
-                    H['wls'] = self.wls
-                    H['spectrum'] = self.spectrum
-                
+                    H['image'] = save_img
+                    
                     self.h5_file.close()
 
-                # NPZ data file
-                if False: 
-                    save_dict = {
-                             'spectrum': self.spectrum,
-                             'wls': self.wls,
-                                }               
+                    #also save as tiff file. Note that we have to convert to integer and normlize for the 16bit format of tiff files if the counts/pixel exceed that limitation (should not occur since accumulate uses averaging)
+                    tiff_data= np.array(save_img/np.amax(save_img)*65536).astype(np.uint16)
+
                     
-                    for lqname,lq in self.app.settings.as_dict().items():
-                        save_dict[lqname] = lq.val
-                    for hw in self.app.hardware.values():
-                        for lqname,lq in hw.settings.as_dict().items():
-                            save_dict[hw.name + "_" + lqname] = lq.val
-                    for lqname,lq in self.settings.as_dict().items():
-                        save_dict[self.name +"_"+ lqname] = lq.val
-    
-                    self.fname = "%i_%s.npz" % (time.time(), self.name)
-                    np.savez_compressed(self.fname, **save_dict)
-                    self.log.info( "saved: " + self.fname)
-                    
-                self.log.info( "Andor CCD single acq successfully acquired")
-                # print("Andor CCD single acq successfully acquired")
-                # self.settings.continuous.update_value(True)
-                
-            ccd_hw.settings.ccd_status.read_from_hardware()
-            ccd_hw.settings.temperature.read_from_hardware()
-            ccd_hw.settings.temp_status.read_from_hardware()
-        '''
+                    t = time.localtime(time.time())
+                    t_string = "{:02d}{:02d}{:02d}_{:02d}{:02d}{:02d}".format(int(str(t[0])[2:4]), t[1], t[2], t[3], t[4], t[5])
+                    fname = os.path.join(self.app.settings['save_dir'], "%s_%s_%s" % (t_string,self.app.settings.sample.val, self.name))
+                    im = np.arange(100,dtype=np.uint16).reshape(10,10)
+                    imageio.imwrite(fname + '.tif',tiff_data)
+            
+ 
 
     def run_continuously(self):
         self.settings['continuous']=True
-        #self.settings['save_h5']=False
+        self.settings['save_h5']=False
         self.start()
 
     def acquire_to_save(self):
         self.settings['continuous']=False
-        #self.settings['save_h5']=True
+        self.settings['save_h5']=True
         self.start()
-        
+
+    def changeAcqOpt(self,Opt):
+        cam = self.app.hardware['andor3_camera'].cam
+        if cam._lib.get_bool(cam._handle, "CameraAcquiring"):
+            self.AqcOptBuffer.put([Opt,self.sender().value()])
+        else:
+            self.hw.settings[Opt]=self.sender().value()
+
     
     def update_display(self):
         if hasattr(self, 'im'):
             #print('update_display', self.buffer_.shape)
             if len(self.im.shape) == 2:
-                self.img_item.setImage(self.im.T, autoLevels=False)
+                self.img_item.setImage(np.rot90(self.im.T,2), autoLevels=False)
                 self.hist_lut.imageChanged(autoLevel=True, autoRange=True)
                 y = self.spectra_data
                 

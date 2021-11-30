@@ -2,6 +2,8 @@ from ScopeFoundry import HardwareComponent
 import csv
 from ScopeFoundry.logged_quantity import LoggedQuantity
 import os
+import threading
+import time
 
 
 dtype_map = dict(Integer=int, FloatingPoint=float, Boolean=bool, Command=None, Enumerated=str, String=str )
@@ -52,7 +54,7 @@ class Andor3CameraHW(HardwareComponent):
         self.sdk3 = AndorSDK3()
         self.cam = cam = self.sdk3.GetCamera(0)
         #print (cam.SerialNumber)        
-        
+        debug = self.settings['debug_mode']
     
         #self.settings.temperature.connect_to_hardware(read_func= lambda cam=cam: cam.SensorTemperature)
         
@@ -60,6 +62,7 @@ class Andor3CameraHW(HardwareComponent):
         
         for x in self.feature_dict.keys():
             A = self.feature_dict[x]
+
             #print("="*10, A['name'])
             A['implemented'] = self.hw_feature_is_implemented(A['name'])
             
@@ -72,6 +75,8 @@ class Andor3CameraHW(HardwareComponent):
             A['writable'] = self.hw_feature_is_writable(A['name'])
             A['readonly'] = self.hw_feature_is_readonly(A['name'])
             
+            if debug:
+                print(x, A)
             
 
             
@@ -91,6 +96,12 @@ class Andor3CameraHW(HardwareComponent):
             
             A['lq'].connect_to_hardware(read_func = read_func,
                                         write_func = write_func)
+
+        #turn on cooling and keep reading it
+        self.settings['SensorCooling']=True
+        self.update_thread_interrupted = False
+        self.update_thread = threading.Thread(target=self.update_thread_run, daemon=True)        
+        self.update_thread.start()
 
         self.read_from_hardware()
         
@@ -113,10 +124,16 @@ class Andor3CameraHW(HardwareComponent):
         
     def hw_feature_enum_options(self, feature_name):
         return self.cam.__getattr__("options_" + feature_name)
+
+    def update_thread_run(self):
+        while not self.update_thread_interrupted:
+            self.settings.SensorTemperature.read_from_hardware()
+            self.settings.TemperatureStatus.read_from_hardware()
+            time.sleep(1)
         
     
     def disconnect(self):
-        
+        self.update_thread_interrupted = True
         self.settings.disconnect_all_from_hardware()
         
         if hasattr(self, 'cam'):

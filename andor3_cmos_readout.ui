@@ -176,23 +176,6 @@ QCheckBox#hw_connect_checkBox::unchecked{background-color:rgb(238,144,144)}</str
            </property>
           </widget>
          </item>
-         <item row="6" column="1">
-          <widget class="QLabel" name="temp_status_label">
-           <property name="font">
-            <font>
-             <weight>50</weight>
-             <bold>false</bold>
-             <kerning>true</kerning>
-            </font>
-           </property>
-           <property name="text">
-            <string>STATUS</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
-           </property>
-          </widget>
-         </item>
          <item row="6" column="0">
           <widget class="QLabel" name="label_22">
            <property name="font">
@@ -265,6 +248,13 @@ QGroupBox::title{subcontrol-origin: margin; subcontrol-position: top center;top:
            </property>
            <property name="alignment">
             <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item row="6" column="1">
+          <widget class="QComboBox" name="temp_status_comboBox">
+           <property name="enabled">
+            <bool>false</bool>
            </property>
           </widget>
          </item>
@@ -402,6 +392,15 @@ QGroupBox#groupBox_6::title{subcontrol-origin: margin; subcontrol-position: top 
              <widget class="QDoubleSpinBox" name="Acc_Num_doubleSpinBox">
               <property name="alignment">
                <set>Qt::AlignCenter</set>
+              </property>
+              <property name="decimals">
+               <number>0</number>
+              </property>
+              <property name="maximum">
+               <double>9999999.000000000000000</double>
+              </property>
+              <property name="value">
+               <double>1.000000000000000</double>
               </property>
              </widget>
             </item>
@@ -1134,7 +1133,7 @@ QGroupBox#groupBox::title{subcontrol-origin: margin; subcontrol-position: top ce
       <string notr="true">QGroupBox#image_groupBox{border:0p;background:  black}</string>
      </property>
      <property name="currentIndex">
-      <number>2</number>
+      <number>0</number>
      </property>
      <widget class="QWidget" name="tab_2">
       <attribute name="title">
